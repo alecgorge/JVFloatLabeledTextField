@@ -27,6 +27,8 @@
 
 #import <UIKit/UIKit.h>
 
+#import <libPhoneNumber-iOS/NBPhoneNumberUtil.h>
+
 /**
  * `JVFloatLabeledTextField` is a `UITextField` subclass that implements the "Float Label Pattern".
  *
@@ -123,5 +125,10 @@ IB_DESIGNABLE
  *  @param floatingTitle The string to be shown above the text field once it has been populated with text by the user.
  */
 - (void)setPlaceholder:(NSString *)placeholder floatingTitle:(NSString *)floatingTitle;
+
+- (void)enablePhoneNumberModeForRegion:(NSString *)region;
+- (NSString *)phoneNumberWithFormat:(NBEPhoneNumberFormat)format;
+
+@property (nonatomic) BOOL containsValidNumber;
 
 @end

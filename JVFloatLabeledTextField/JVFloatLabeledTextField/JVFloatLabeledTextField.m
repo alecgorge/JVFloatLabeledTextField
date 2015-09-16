@@ -28,8 +28,19 @@
 #import "JVFloatLabeledTextField.h"
 #import "NSString+TextDirectionality.h"
 
+#import <libPhoneNumber-iOS/NBAsYouTypeFormatter.h>
+
 static CGFloat const kFloatingLabelShowAnimationDuration = 0.3f;
 static CGFloat const kFloatingLabelHideAnimationDuration = 0.3f;
+
+@interface JVFloatLabeledTextField () <UITextFieldDelegate>
+
+@property (nonatomic, getter=isPhoneModeEnabled) BOOL phoneModeEnabled;
+@property (nonatomic) NSString *phoneRegion;
+@property (nonatomic) NBAsYouTypeFormatter *phoneFormatter;
+@property (nonatomic, weak) id<UITextFieldDelegate> upstreamDelegate;
+
+@end
 
 @implementation JVFloatLabeledTextField
 {
@@ -72,6 +83,184 @@ static CGFloat const kFloatingLabelHideAnimationDuration = 0.3f;
 
     _adjustsClearButtonRect = YES;
     _isFloatingLabelFontDefault = YES;
+    
+    [super setDelegate:self];
+}
+
+#pragma mark -
+
+- (void)setDelegate:(id<UITextFieldDelegate>)delegate {
+    self.upstreamDelegate = delegate;
+}
+
+- (id<UITextFieldDelegate>)delegate {
+    return self.upstreamDelegate;
+}
+
+- (void)enablePhoneNumberModeForRegion:(NSString *)region {
+    self.phoneRegion = region ?: [[NSLocale currentLocale] objectForKey:NSLocaleCountryCode];
+    self.phoneFormatter = [NBAsYouTypeFormatter.alloc initWithRegionCode:self.phoneRegion];
+    self.phoneModeEnabled = YES;
+}
+
+- (BOOL)textFieldShouldBeginEditing:(UITextField *)textField {
+    if ([self.upstreamDelegate respondsToSelector:@selector(textFieldShouldBeginEditing:)]) {
+        return [self.upstreamDelegate textFieldShouldBeginEditing:textField];
+    }
+    else {
+        return YES;
+    }
+}
+
+- (void)textFieldDidBeginEditing:(UITextField *)textField {
+    if ([self.upstreamDelegate respondsToSelector:@selector(textFieldDidBeginEditing:)]) {
+        [self.upstreamDelegate textFieldDidBeginEditing:textField];
+    }
+}
+
+- (BOOL)textFieldShouldEndEditing:(UITextField *)textField {
+    if ([self.upstreamDelegate respondsToSelector:@selector(textFieldShouldEndEditing:)]) {
+        return [self.upstreamDelegate textFieldShouldEndEditing:textField];
+    }
+    else {
+        return YES;
+    }
+}
+
+- (void)textFieldDidEndEditing:(UITextField *)textField {
+    if ([self.upstreamDelegate respondsToSelector:@selector(textFieldDidEndEditing:)]) {
+        [self.upstreamDelegate textFieldDidEndEditing:textField];
+    }
+}
+
+
+- (BOOL)textField:(UITextField *)textField
+shouldChangeCharactersInRange:(NSRange)range
+replacementString:(NSString *)string {
+    if (textField != self || !self.isPhoneModeEnabled) {
+        if([self.upstreamDelegate respondsToSelector:@selector(textField:shouldChangeCharactersInRange:replacementString:)]) {
+            return [self.upstreamDelegate textField:textField
+                      shouldChangeCharactersInRange:range
+                                  replacementString:string];
+        }
+        else {
+            return YES;
+        }
+    }
+    else {
+        BOOL singleInsertAtEnd = (string.length == 1) && (range.location == textField.text.length);
+        BOOL singleDeleteFromEnd = (string.length == 0) && (range.length == 1) && (range.location == textField.text.length - 1);
+        
+        BOOL shouldChange = NO;
+        NSString *formattedNumber;
+        NSString *prefix;
+        NSRange formattedRange;
+        NSString *removedCharacter;
+        if (singleInsertAtEnd) {
+            formattedNumber = [self.phoneFormatter inputDigit:string];
+            if ([formattedNumber hasSuffix:string]) {
+                formattedRange = [formattedNumber rangeOfString:string options:(NSBackwardsSearch | NSAnchoredSearch)];
+                prefix = [formattedNumber stringByReplacingCharactersInRange:formattedRange withString:@""];
+                shouldChange = YES;
+            }
+        }
+        else if (singleDeleteFromEnd) {
+            formattedNumber = [self.phoneFormatter removeLastDigit];
+            removedCharacter = [textField.text substringWithRange:range];
+            prefix = [formattedNumber stringByAppendingString:removedCharacter];
+            formattedRange = [prefix rangeOfString:removedCharacter options:(NSBackwardsSearch | NSAnchoredSearch)];
+            shouldChange = YES;
+        }
+        
+        if (shouldChange) {
+            if ([self.upstreamDelegate respondsToSelector:@selector(textField:shouldChangeCharactersInRange:replacementString:)]) {
+                [self assignText:prefix];
+                if (![self.upstreamDelegate textField:textField
+                        shouldChangeCharactersInRange:formattedRange
+                                    replacementString:string]) {
+                    
+                    // Revert changes
+                    if (singleInsertAtEnd) {
+                        [self.phoneFormatter removeLastDigit];
+                    }
+                    else if (singleDeleteFromEnd) {
+                        [self.phoneFormatter inputDigit:removedCharacter];
+                    }
+                }
+                else {
+                    [self assignText:formattedNumber];
+                }
+            }
+            else {
+                [self assignText:formattedNumber];
+            }
+        }
+        return NO;
+    }
+}
+
+- (BOOL)textFieldShouldClear:(UITextField *)textField {
+    if ([self.upstreamDelegate respondsToSelector:@selector(textFieldShouldClear:)]) {
+        return [self.upstreamDelegate textFieldShouldClear:textField];
+    }
+    else {
+        return YES;
+    }
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)textField {
+    if ([self.upstreamDelegate respondsToSelector:@selector(textFieldShouldReturn:)]) {
+        return [self.upstreamDelegate textFieldShouldReturn:textField];
+    }
+    else {
+        return YES;
+    }
+}
+
+- (void)checkValidity:(NSString *)number {
+    NBPhoneNumberUtil *util = [NBPhoneNumberUtil sharedInstance];
+    NBPhoneNumber *phoneNumber = [util parse:number defaultRegion:self.phoneRegion error:nil];
+    self.containsValidNumber = [util isValidNumber:phoneNumber];
+}
+
+- (void)setText:(NSString *)text {
+    if (!self.isPhoneModeEnabled) {
+        return [super setText:text];
+    }
+
+    [self.phoneFormatter clear];
+    
+    __block NSString *formattedNumber;
+    [text enumerateSubstringsInRange:NSMakeRange(0, text.length)
+                             options:NSStringEnumerationByComposedCharacterSequences
+                          usingBlock:^(NSString *substring, NSRange substringRange, NSRange enclosingRange, BOOL *stop) {
+        unichar character = [substring characterAtIndex:substringRange.length - 1];
+        if ([[NSCharacterSet decimalDigitCharacterSet] characterIsMember:character]) {
+            NSString *digit = [NSString stringWithFormat:@"%C", character];
+            formattedNumber = [self.phoneFormatter inputDigit:digit];
+        }
+    }];
+    [self assignText:formattedNumber];
+}
+
+- (void)assignText:(NSString *)text {
+    super.text = text;
+    [self checkValidity:text];
+}
+
+- (NSString *)phoneNumberWithFormat:(NBEPhoneNumberFormat)format {
+    NBPhoneNumberUtil *util = [NBPhoneNumberUtil sharedInstance];
+    
+    NSError *error;
+    NBPhoneNumber *phoneNumber = [util parse:self.text defaultRegion:self.phoneRegion error:&error];
+    
+    if (!error) {
+        return [util format:phoneNumber numberFormat:format error:&error];
+    }
+    
+    NSLog(@"Error parsing phone number: %@", error);
+    
+    return nil;
 }
 
 #pragma mark -
